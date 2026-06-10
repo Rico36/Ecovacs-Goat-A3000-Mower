@@ -5,9 +5,36 @@ Working patches for the deebot-client library to get the GOAT A3000 LiDAR
 from HA, correct live state (Mowing / Paused / Returning / Docked / Error),
 and working error codes.
 
-Tested on: firmware 1.13.31, deebot-client 18.3.0, HA Container on
-Raspberry Pi. Everything here was verified against real hardware with MQTT
-debug logs. No guesswork.
+Everything here was verified against real hardware with MQTT debug logs.
+No guesswork.
+
+## Tested environment
+
+These patches were built and verified on exactly this setup. The closer
+yours matches, the more likely they work unmodified.
+
+| Component | Version / detail |
+|---|---|
+| Mower | GOAT A3000 LiDAR, model `cr0e4u`, firmware 1.13.31 |
+| Home Assistant | Container install (Docker), container name `home-assistant` |
+| Host | Raspberry Pi, Raspberry Pi OS (64-bit) |
+| Ecovacs integration library | deebot-client **18.3.0** |
+| Python inside the HA container | 3.14 (`/usr/local/lib/python3.14/site-packages/`) |
+| Container updates | Watchtower (see "Surviving container updates") |
+
+Not tested on: HA OS or HA Supervised (no direct `docker exec` access to
+the HA container there), other GOAT models, other firmware versions.
+
+**The deebot-client version matters.** Two of the three patches are
+full-file replacements. Applying them over a different library version
+will silently revert unrelated upstream changes in those files. If your
+version differs from 18.3.0, diff the patches against your installed files
+and port the changes by hand (they are small; see "The patches" below).
+Check your version with:
+
+```bash
+docker exec home-assistant python -c "import deebot_client; print(deebot_client.__version__)"
+```
 
 ## The problems
 
@@ -44,7 +71,7 @@ Three files, drop-in replacements for the ones inside the HA container:
 ## Install
 
 ```bash
-git clone git@github.com:Rico36/Ecovacs-Goat-A3000-Mower.git
+git clone https://github.com/Rico36/Ecovacs-Goat-A3000-Mower.git
 cd Ecovacs-Goat-A3000-Mower
 ./scripts/apply-patches.sh
 ```
@@ -71,6 +98,8 @@ the patches are intact. Root crontab:
 ```
 0 * * * * /home/admin/goat-a3000/scripts/check-patches.sh >> /home/admin/patch.log 2>&1
 ```
+
+Adjust the path to wherever you cloned the repo.
 
 ## Findings reference
 
