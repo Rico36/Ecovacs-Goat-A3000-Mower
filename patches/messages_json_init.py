@@ -93,7 +93,6 @@ _LEGACY_USE_GET_COMMAND = _MAP_LEGACY_COMMANDS | frozenset(
 
 _MOWER_EVENT_OVERRIDES: dict[str, str] = {
     "onScheduleTaskInfo": "getCleanInfo",
-    "onChargeInfo": "getCleanInfo",
 }
 
 
@@ -137,3 +136,28 @@ def get_legacy_message(
         _LOGGER.debug('Command "%s" doesn\'t support message handling', converted_name)
 
     return None
+
+
+# --- GOAT mower patch: guarded onChargeInfo handler ---
+# Only 'goCharging' maps to a state event (RETURNING). Other states
+# (idle/workComplete after docking) are ignored, because DOCKED is
+# reported reliably via the charge-state events and mapping 'idle'
+# here would override DOCKED with IDLE (shown as 'Paused' in HA).
+from deebot_client.events import StateEvent  # noqa: E402
+from deebot_client.message import HandlingResult, MessageBodyDataDict  # noqa: E402
+from deebot_client.models import State  # noqa: E402
+
+
+class OnChargeInfoMower(MessageBodyDataDict):
+    """Mower onChargeInfo push handler."""
+
+    NAME = "onChargeInfo"
+
+    @classmethod
+    def _handle_body_data_dict(cls, event_bus, data):
+        if data.get("state") == "goCharging":
+            event_bus.notify(StateEvent(State.RETURNING))
+        return HandlingResult.success()
+
+
+MESSAGES[OnChargeInfoMower.NAME] = OnChargeInfoMower
