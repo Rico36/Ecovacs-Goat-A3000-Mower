@@ -176,4 +176,4 @@ class CleanMower(CleanV2):
     def _get_args(self, action: CleanAction) -> dict[str, Any]:
         # GOAT LiDAR mowers use 'area' type for all actions.
         # Sending empty string for pause/stop causes cloud error 20003.
-        return {"act": action.value, "content": {"type": "area"}}
+        return {"act": action.value, "content": {"type": "auto"}}
