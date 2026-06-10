@@ -93,6 +93,7 @@ _LEGACY_USE_GET_COMMAND = _MAP_LEGACY_COMMANDS | frozenset(
 
 _MOWER_EVENT_OVERRIDES: dict[str, str] = {
     "onScheduleTaskInfo": "getCleanInfo",
+    "onChargeInfo": "getCleanInfo",
 }
 
 
