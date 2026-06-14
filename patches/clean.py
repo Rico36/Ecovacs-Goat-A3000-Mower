@@ -177,3 +177,31 @@ class CleanMower(CleanV2):
         # GOAT LiDAR mowers use 'area' type for all actions.
         # Sending empty string for pause/stop causes cloud error 20003.
         return {"act": action.value, "content": {"type": "auto"}}
+
+
+class CleanMowerArea(CleanMower):
+    """CleanMower variant that reads zone IDs from /tmp/goat_zones.
+
+    Write a comma-separated zone ID string to /tmp/goat_zones inside the
+    container before calling start_mowing. The file is consumed on first use.
+    If absent or empty, falls back to full-auto mode (same as CleanMower).
+
+    Zone IDs for cr0e4u (GOAT A3000 LiDAR, fw 1.13.31):
+      2=Front Street, 3=Front, 4=Left Side Street,
+      5=Backyard Side, 6=Left Side, 7=Backyard
+    """
+
+    _ZONES_FILE = "/tmp/goat_zones"
+
+    def _get_args(self, action: CleanAction) -> dict[str, Any]:
+        import os  # noqa: PLC0415
+        if action == CleanAction.START:
+            try:
+                with open(self._ZONES_FILE) as f:
+                    zones = f.read().strip()
+                os.unlink(self._ZONES_FILE)
+                if zones:
+                    return {"act": action.value, "content": {"type": "spotArea", "value": zones}}
+            except OSError:
+                pass
+        return super()._get_args(action)
