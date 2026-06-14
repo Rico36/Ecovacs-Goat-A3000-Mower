@@ -1,4 +1,4 @@
-## Scenario 1 — Manual mowing (Press "Start Mowing Now" button in dashboard)
+## Scenario 1 — Manual mowing (Press "Start Mowing Now" button in Home Assistant dashboard)
 
 1. **Button** calls `script.goat_start_mowing_now`
 2. **goat_start_mowing_now** — 5s delay → refresh entity state → weather check
