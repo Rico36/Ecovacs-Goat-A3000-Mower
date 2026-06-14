@@ -20,7 +20,7 @@ input_select:
   goat_mow_mode:
     name: GOAT Mow Mode
     options:
-      - Full Map
+      - Full Map (Auto)
       - Areas (3,2,6,4,7,5)
     icon: mdi:map
 
