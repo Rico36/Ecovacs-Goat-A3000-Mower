@@ -47,9 +47,15 @@ input_text:
     max: 255
 
   goat_zone_ids:
+  # This are my zone areas defined in the Ecovacs APP  Area Mowing page.
+  # Internally the library uses zone iDs and not the actual zone area numbers shown in the Ecovac app. 
+  # To find your zone ids, enable debug log for the mower in HA, run the mower using areas from the app and 
+  # look in the log for this line:  onCleanInfo ... "type": "spotArea", "value": "3,2,6,4,7,5"
+  # Where the first number "7" in this example, is Area 1, "5" is Area 2, etc..
+  # These numbers can/ will be different in your own App environment. 
     name: GOAT Zone IDs
-    initial: "7,5,6,4,3,2"
-    max: 50
+    initial: "3,2,6,4,7,5"
+    max: 30
 
 shell_command:
   # Writes selected zone IDs to a temp file inside the container.
