@@ -28,16 +28,18 @@
 1. **Automation: `GOAT - Scheduled Start Gatekeeper`** fires at hardcoded days+time (Sat/Sun/Tue/Thu) if `goat_automation_enabled` = on
 2. Calls `script.goat_mowing_start`
 3. **goat_mowing_start** — 10s delay → refresh state → weather check
-   - If weather blocks → cancel, turns off session flags, notifies (regular), done
+   - If weather blocks → cancel, mowing_session_active stays off, notifies (regular), done
    - If clear:
      - Turns on `goat_departure_window_active` + `goat_mowing_session_active`
      - Records `goat_mowing_session_started_at`
      - Calls `goat_open_garage`
      - Notifies "Garage just opened for scheduled mowing start" (regular)
      - **Does not call `lawn_mower.start_mowing`** — the mower starts itself on its own internal schedule
-4. **Mower starts on its own → transitions → mowing**
-   - `GOAT - Close Garage When Mowing Starts` fires → waits 1 min → closes garage → turns off `departure_window_active`
-   - `GOAT - Manual Start Detected` does **not** fire — `mowing_session_active` is already on
+4. Mower starts on its own → transitions to `mowing`
+   - **GOAT - Manual Start Detected** fires on every `mowing` transition and checks `mowing_session_active`:
+     - `on` → HA already authorized this run, automation does nothing
+     - `off` → HA cancelled due to weather but mower self-started anyway → checks weather → bad → sends mower back to dock, critical notify *"Mower stopped due to weather"*, garage stays closed
+   - **GOAT - Close Garage When Mowing Starts** fires if `departure_window_active` = `on` → waits 1 min → closes garage → turns off `departure_window_active`
 5. Steps 4–6 from scenario 1 apply identically from here
 
 ---
