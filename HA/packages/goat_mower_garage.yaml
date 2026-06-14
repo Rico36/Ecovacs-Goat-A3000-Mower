@@ -672,7 +672,7 @@ automation:
               now().strftime('%H:%M')
               ==
               (
-                as_datetime(started) + timedelta(minutes=100)
+                as_datetime(started) + timedelta(minutes=120)
               ).strftime('%H:%M')
             }}
           {% else %}
