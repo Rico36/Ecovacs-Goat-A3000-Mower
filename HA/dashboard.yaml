@@ -1,0 +1,82 @@
+title: Home
+views:
+  - title: Main
+    path: main
+    icon: mdi:home-lightning-bolt
+    cards:
+      - type: entities
+        title: GOAT Mowing Schedule
+        show_header_toggle: false
+        entities:
+          - entity: input_boolean.goat_automation_enabled
+            name: GOAT Automation Enabled
+          - entity: lawn_mower.goat_a3000_lidar
+            name: GOAT Status
+            icon: mdi:robot-mower
+          - type: section
+            label: Manual Mowing
+          - type: button
+            name: Start Mowing Now
+            icon: mdi:play-circle
+            tap_action:
+              action: call-service
+              service: script.goat_start_mowing_now
+          - entity: input_select.goat_mow_mode
+            name: Mow Mode
+          - entity: input_text.goat_zone_ids
+            name: Zone IDs (Map to Areas)
+          - type: section
+            label: Scheduled Mowing
+          - entity: input_datetime.goat_mowing_start_time
+            name: Scheduled Start Time
+          - type: custom:template-entity-row
+            name: Scheduled Days
+            icon: mdi:calendar-week
+            state: Sat  • Sun • Tue • Thu
+          - type: custom:template-entity-row
+            name: Expected Return
+            icon: mdi:robot-mower
+            state: Approximately 1 hr and 35 minutes after start
+          - type: custom:template-entity-row
+            name: Departure Window Active
+            icon: mdi:garage-alert
+            state: >
+              {% if is_state('input_boolean.goat_departure_window_active', 'on')
+              %}
+                Yes
+              {% else %}
+                No
+              {% endif %}
+          - type: custom:template-entity-row
+            name: Mowing Session Active
+            icon: mdi:robot-mower
+            state: >
+              {% if is_state('input_boolean.goat_mowing_session_active', 'on')
+              %}
+                Yes
+              {% else %}
+                No
+              {% endif %}
+          - type: custom:template-entity-row
+            name: Last Mowing Status
+            icon: mdi:information-outline
+            state: |
+              {{ states('input_text.goat_last_mowing_status') }}
+          - type: custom:template-entity-row
+            name: Last Mowing Started
+            icon: mdi:clock-start
+            state: >
+              {% set dt =
+              states('input_datetime.goat_mowing_session_started_at') %} {% if
+              dt not in ['unknown','unavailable',''] %}
+                {{ as_timestamp(dt) | timestamp_custom('%b %d, %Y %I:%M %p') }}
+              {% else %}
+                Never
+              {% endif %}
+          - type: custom:template-entity-row
+            name: Last Decision
+            icon: mdi:clock-outline
+            state: >
+              {{
+              as_timestamp(states('input_datetime.goat_last_mowing_decision'))
+                 | timestamp_custom('%b %d, %Y %I:%M %p') }}
