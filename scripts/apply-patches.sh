@@ -10,7 +10,7 @@ SITE=/usr/local/lib/python3.14/site-packages/deebot_client
 # version. Applying them over another version would silently revert
 # unrelated upstream changes.
 WANT="18.3.0"
-GOT=$(docker exec $CONTAINER python -c "import deebot_client; print(deebot_client.__version__)" 2>/dev/null)
+GOT=$(docker exec $CONTAINER python -c "import importlib.metadata; print(importlib.metadata.version('deebot-client'))" 2>/dev/null)
 if [ "$GOT" != "$WANT" ]; then
   echo "deebot-client $GOT found, patches were built for $WANT. Aborting."
   echo "Diff the patches against your installed files and port by hand."
