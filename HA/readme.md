@@ -10,13 +10,12 @@
      - Calls `goat_open_garage` (opens door, waits up to 1 min, sets `goat_garage_managed_open`)
      - Calls `lawn_mower.start_mowing` → CleanMowerArea reads zone file (or falls back to auto)
      - Notifies (regular)
-3. **Mower transitions → mowing**
+3. **Mower status transition to → mowing**
    - `GOAT - Close Garage When Mowing Starts` fires (because `departure_window_active` = on) → waits 1 min → closes garage → turns off `departure_window_active`
    - `GOAT - Manual Start Detected` does **not** fire — `mowing_session_active` is already on, condition fails
-4. **At session_started_at + 95 min** — `GOAT - Open Garage For Expected Return` fires (weekday guard applies) → opens garage, notifies (regular)
-5. **Mower transitions → returning** — `GOAT - Open Garage When Returning` fires → opens garage (if not already), sets status "Returning", notifies (regular)
-6. **Mower transitions → docked** — `GOAT - Close Garage When Docked` fires → waits 1 min → closes garage → turns off `mowing_session_active`, notifies (regular)
-7. **At session_started_at + 100 min** (fallback) — `GOAT - Not Docked Fallback Alert` fires only if still not docked → **critical** notify
+4. **Mower status transition to → returning** — `GOAT - Open Garage When Returning` fires → opens garage (if not already), sets status "Returning", notifies (regular)
+5. **Mower status transition to → docked** — `GOAT - Close Garage When Docked` fires → waits 1 min → closes garage → turns off `mowing_session_active`, notifies (regular)
+6. **At session_started_at + 120 min** (fallback) — `GOAT - Not Docked Fallback Alert` fires only if still not docked → **critical** notify
 
 **If anything goes wrong mid-session:**
 - Error reported → `GOAT - Error After Mowing Started` → opens garage + tries dock → **critical** notify
@@ -39,7 +38,7 @@
 4. **Mower starts on its own → transitions → mowing**
    - `GOAT - Close Garage When Mowing Starts` fires → waits 1 min → closes garage → turns off `departure_window_active`
    - `GOAT - Manual Start Detected` does **not** fire — `mowing_session_active` is already on
-5. Steps 4–7 from scenario 1 apply identically from here
+5. Steps 4–6 from scenario 1 apply identically from here
 
 ---
 
