@@ -35,7 +35,7 @@
      - Calls `goat_open_garage`
      - Notifies "Garage just opened for scheduled mowing start" (regular)
      - **Does not call `lawn_mower.start_mowing`** — the mower starts itself on its own internal schedule
-4. Mower starts on its own → transitions to `mowing`
+4. Mower starts on its own → transitions to `mowing` (because it was scheduled or someone physically presses start on the mower, etc )
    - **GOAT - Manual Start Detected** fires on every `mowing` transition and checks `mowing_session_active`:
      - `on` → HA already authorized this run, automation does nothing
      - `off` → HA cancelled due to weather but mower self-started anyway → checks weather → bad → sends mower back to dock, critical notify *"Mower stopped due to weather"*, garage stays closed
