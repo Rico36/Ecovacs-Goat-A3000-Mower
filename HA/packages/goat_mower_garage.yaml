@@ -301,9 +301,8 @@ script:
                   {{ not ns.block }}
             sequence:
               - if:
-                  - condition: state
-                    entity_id: input_select.goat_mow_mode
-                    state: "Areas"
+                  - condition: template
+                    value_template: "{{ states('input_select.goat_mow_mode').startswith('Areas') }}"
                 then:
                   - service: shell_command.goat_write_zones
                     data:
