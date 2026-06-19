@@ -1,3 +1,95 @@
+## HA Component Stack
+
+### Host environment
+
+Home Assistant runs as a **Docker container** (`home-assistant`) on a **Raspberry Pi**
+running Raspberry Pi OS 64-bit. The container name and Python site-packages path are
+referenced in `validate-patches.sh` — adjust them if your setup differs.
+
+### Integrations (installed via Settings → Integrations)
+
+| Integration | Purpose | Entity used |
+|---|---|---|
+| Ecovacs (with deebot-client patches) | Mower control and state | `lawn_mower.goat_a3000_lidar` |
+| PirateWeather | Hourly rain forecast for 95-minute window | `weather.pirateweather` |
+| iOS Companion App | Push notifications (critical + regular) | `notify.house_phones` |
+| Zigbee (ZHA or Zigbee2MQTT) | Connects the soil moisture sensor | — |
+| ESPHome — [Ratgdo32](https://ratcloud.llc/products/ratgdo32) | Garage door open/close control and state | `cover.garage_door` |
+
+> **Ratgdo32** is a Wi-Fi garage door controller that integrates with HA via ESPHome.
+> It wires directly to the garage door opener's safety terminals — no cloud required.
+> Any HA `cover` entity works as a drop-in replacement; update `cover.garage_door`
+> references in `goat_mower_garage.yaml` to match your entity name.
+
+> The Ecovacs integration requires the deebot-client patches in the `/patches` folder to
+> work correctly with the A3000. See the repo root README for install instructions.
+
+### HACS frontend cards (required for the dashboard)
+
+| Card | Purpose |
+|---|---|
+| `custom:button-card` | Day-of-week selector grid (green = scheduled, grey = off) |
+| `custom:template-entity-row` | Formatted session status rows (Expected Return, Last Decision, etc.) |
+
+Install both from HACS → Frontend before pasting the dashboard YAML.
+
+### Built-in HA platforms used
+
+| Platform | Purpose |
+|---|---|
+| `sensor: platform: derivative` | Computes soil moisture rate of change (%/hour) |
+| `input_select` | Grass Status (Dry / Wet / Uncertain) and Mow Mode |
+| `input_boolean` | Session flags, schedule day toggles, garage tracking |
+| `input_datetime` | Scheduled start time, session timestamps |
+| `input_text` | Zone IDs, last mowing status label |
+| `shell_command` | Writes zone IDs to `/tmp/goat_zones` inside the HA container |
+
+---
+
+## Soil Moisture Sensor
+
+**THIRDREALITY Smart Soil Moisture Sensor Gen2 (Zigbee)**
+[Amazon listing](https://www.amazon.com/dp/B0GHNB78F7/ref=twister_B0GN8TYSFF?_encoding=UTF8&psc=1)
+
+Stake it into the lawn in the front yard (or wherever representative of the mowing area).
+Pairs via ZHA or Zigbee2MQTT. Once paired, rename the moisture entity to:
+
+```
+sensor.front_rain_sensor_soil_moisture
+```
+
+or update the entity ID references in `goat_mower_garage.yaml` to match your actual name.
+
+### How it is used
+
+The sensor drives two independent features:
+
+**1. Mowing block (hard gate)**
+Every mow attempt checks soil moisture before starting. If ≥ 55%, mowing is cancelled
+regardless of forecast. This catches rain, overnight dew, and drizzle that PirateWeather
+may not predict at fine resolution.
+
+**2. Grass Status tracking (observational)**
+A derivative sensor (`sensor.soil_moisture_rate_of_change`) computes the rate of change
+in %/hour over a 30-minute rolling window. Combined with the raw moisture level, an
+automation classifies grass condition:
+
+| Rule | Condition | Status |
+|---|---|---|
+| Fully dried | moisture < 55% | Dry |
+| Actively drying | moisture < 68% AND rate < −3 %/h | Dry |
+| Actively wetting | moisture > 55% AND rate > +3 %/h | Wet |
+| No rule matches | — | last recorded status held (or "Uncertain" if never set) |
+
+`input_select.goat_grass_status` (Dry / Wet / Uncertain) is shown on the dashboard and
+is manually overridable from the dropdown. The automation overwrites a manual selection
+as soon as a rule fires again.
+
+The 55 % / 68 % moisture thresholds and ±3 %/h rate thresholds are starting points —
+calibrate them over a few rain/dry cycles by watching the sensor history chart.
+
+---
+
 ## Scenario 1 — Manual mowing (Press "Start Mowing Now" in the HA dashboard)
 
 1. **Button** calls `script.goat_start_mowing_now`
@@ -104,7 +196,9 @@ Three sections in a vertical-stack replacing the old GOAT card:
 
 3. **Entities card** (title: Mowing Run)
    - *Manual Mowing* section: Start Mowing Now button
-   - *Session Status* section: Expected Return · Departure Window Active · Mowing Session Active · Makeup Mow Pending · Last Mowing Started · Last Decision
+   - *Session Status* section: Expected Return · Departure Window Active · Mowing Session Active · Makeup Mow Pending
+   - *Grass Condition* section: Grass Status (editable dropdown) · Grass Moisture +/- · Soil Moisture
+   - *Last Session* section: Last Mowing Started · Last Decision
 
 HACS cards required: `custom:button-card`, `custom:template-entity-row`
 
