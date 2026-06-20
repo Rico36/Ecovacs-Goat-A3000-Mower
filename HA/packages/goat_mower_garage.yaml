@@ -543,18 +543,17 @@ automation:
     mode: single
 
     trigger:
-      - platform: template
-        value_template: >
-          {{
-            now().strftime('%H:%M')
-            ==
-            today_at(states('input_datetime.goat_mowing_start_time')).strftime('%H:%M')
-          }}
+      - platform: time_pattern
+        minutes: "/1"
 
     condition:
       - condition: state
         entity_id: input_boolean.goat_automation_enabled
         state: "on"
+
+      - condition: template
+        value_template: >
+          {{ now().strftime('%H:%M') == states('input_datetime.goat_mowing_start_time')[0:5] }}
 
       - condition: template
         value_template: >
@@ -1056,7 +1055,7 @@ automation:
                   option: "Dry"
           - conditions:
               - condition: template
-                value_template: "{{ m < 68 and r < -3 }}"
+                value_template: "{{ m < 68 and r < -1.5 }}"
             sequence:
               - service: input_select.select_option
                 target:
@@ -1065,7 +1064,9 @@ automation:
                   option: "Dry"
           - conditions:
               - condition: template
-                value_template: "{{ m > 55 and r > 3 }}"
+                value_template: >
+                  {% set wet_threshold = 0.5 if now().hour < 10 else 2.0 %}
+                  {{ m > 55 and r > wet_threshold }}
             sequence:
               - service: input_select.select_option
                 target:
