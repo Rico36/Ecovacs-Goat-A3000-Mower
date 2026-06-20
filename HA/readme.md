@@ -64,29 +64,60 @@ or update the entity ID references in `goat_mower_garage.yaml` to match your act
 
 The sensor drives two independent features:
 
-**1. Mowing block (hard gate)**
-Every mow attempt checks soil moisture before starting. If ≥ 55%, mowing is cancelled
-regardless of forecast. This catches rain, overnight dew, and drizzle that PirateWeather
-may not predict at fine resolution.
+**1. Mowing gate — Grass Status (deterministic)**
+`input_select.goat_grass_status` (Dry / Wet / Uncertain) is evaluated before every mow:
 
-**2. Grass Status tracking (observational)**
+| Grass Status | Mowing decision |
+|---|---|
+| Dry | Allowed — user override respected |
+| Wet | Blocked |
+| Uncertain | Falls back to raw soil moisture < 55% |
+
+The status is computed automatically from sensor data but can be **manually overridden**
+from the dashboard dropdown. A manual selection holds until a rule fires again.
+
+**2. Grass Status rules**
+
 A derivative sensor (`sensor.soil_moisture_rate_of_change`) computes the rate of change
-in %/hour over a 30-minute rolling window. Combined with the raw moisture level, an
-automation classifies grass condition:
+in %/hour over a 30-minute rolling window. Combined with raw moisture, the automation
+`GOAT - Update Grass Status` classifies grass condition:
 
 | Rule | Condition | Status |
 |---|---|---|
-| Fully dried | moisture < 55% | Dry |
-| Actively drying | moisture < 68% AND rate < −3 %/h | Dry |
-| Actively wetting | moisture > 55% AND rate > +3 %/h | Wet |
-| No rule matches | — | last recorded status held (or "Uncertain" if never set) |
+| Floor dry | moisture < 55% | Dry |
+| Active drying | moisture < 68% AND rate < −1.5 %/h | Dry |
+| Morning wet (before 10 AM) | moisture > 55% AND rate > 0.5 %/h | Wet |
+| Day/evening wet (10 AM+) | moisture > 55% AND rate > 2.0 %/h | Wet |
+| No rule matches | — | Last recorded status held ("Uncertain" if never set) |
 
-`input_select.goat_grass_status` (Dry / Wet / Uncertain) is shown on the dashboard and
-is manually overridable from the dropdown. The automation overwrites a manual selection
-as soon as a rule fires again.
+The time-based Wet threshold handles morning dew (slow-forming, 0.5 %/h catches it)
+while avoiding false positives from afternoon cloud cover and humidity fluctuations
+(which typically stay below 2.0 %/h without actual rain).
 
-The 55 % / 68 % moisture thresholds and ±3 %/h rate thresholds are starting points —
-calibrate them over a few rain/dry cycles by watching the sensor history chart.
+Thresholds are starting points — calibrate over a few rain/dry cycles by watching
+the sensor history chart.
+
+**3. Mowing block — raw moisture (hard gate)**
+Every mow attempt also checks raw soil moisture directly:
+- Grass Status = Uncertain AND moisture ≥ 55% → blocked
+
+This provides a fast fallback independent of the derivative sensor.
+
+---
+
+## Mowing decision gates
+
+Every mow attempt (scheduled, manual, makeup) must pass **all three gates**:
+
+| Gate | Blocks if... |
+|---|---|
+| Grass Status | `Wet` |
+| Raw moisture (when Uncertain) | soil moisture ≥ 55% |
+| Rain forecast | PirateWeather ≥ 40% precipitation probability in next 95 min |
+| Mower error | error sensor ≠ 0 |
+
+A manual **Dry** override bypasses the moisture gate entirely — the user accepts
+responsibility if conditions turn out otherwise. The forecast gate is never bypassed.
 
 ---
 
@@ -94,7 +125,7 @@ calibrate them over a few rain/dry cycles by watching the sensor history chart.
 
 1. **Button** calls `script.goat_start_mowing_now`
 2. **goat_start_mowing_now** — 5s delay → refresh entity state → weather check
-   - If soil moisture ≥ 55% or rain forecast in next 95 min or mower error → cancel, notify, done
+   - If Grass Status = Wet, or (Uncertain + soil moisture ≥ 55%), or rain forecast in next 95 min, or mower error → cancel, notify, done
    - If clear:
      - If mode = **Areas** → `shell_command.goat_write_zones` writes zone IDs to `/tmp/goat_zones`
      - Turns on `goat_departure_window_active` + `goat_mowing_session_active`
@@ -117,13 +148,13 @@ calibrate them over a few rain/dry cycles by watching the sensor history chart.
 
 ## Scenario 2 — Scheduled mowing (HA is the sole scheduler; Ecovacs app schedules deleted)
 
-1. **`GOAT - Scheduled Start Gatekeeper`** fires when `now()` matches `input_datetime.goat_mowing_start_time`
+1. **`GOAT - Scheduled Start Gatekeeper`** fires every minute via `time_pattern`, checks if
+   `now()` matches `input_datetime.goat_mowing_start_time`
    - Condition: `goat_automation_enabled` = on AND today's `goat_schedule_<weekday>` toggle = on
    - Days are set from the dashboard — 7 green/grey buttons (Mon–Sun), tap to toggle
 2. Calls `script.goat_mowing_start`
-3. **goat_mowing_start** — 10s delay → refresh state → weather check
-   - If soil moisture ≥ 55% or rain forecast in next 95 min or mower error:
-     - Cancel, set `goat_makeup_pending` = on, notify "Mowing cancelled — makeup pending" (regular)
+3. **goat_mowing_start** — 10s delay → refresh state → weather + Grass Status check
+   - If blocked: Cancel, set `goat_makeup_pending` = on, notify "Mowing cancelled — makeup pending" (regular)
    - If clear:
      - If mode = **Areas** → `shell_command.goat_write_zones` writes zone IDs to `/tmp/goat_zones`
      - Turns on `goat_departure_window_active` + `goat_mowing_session_active`
@@ -151,7 +182,7 @@ Triggered when a scheduled mow was cancelled and `goat_makeup_pending` = on.
    - Conditions: `goat_automation_enabled` = on, `goat_makeup_pending` = on,
      `mowing_session_active` = off, today is **not** a scheduled mowing day
      (scheduled days run via the gatekeeper; makeup only fills non-scheduled gaps)
-2. Weather check — same conditions as scheduled mow (soil moisture + forecast + error)
+2. Weather + Grass Status check — same conditions as scheduled mow
    - If still blocked and time is 11am → notify "Makeup mow waiting, will retry hourly" (regular); silent retries each hour after
    - If clear:
      - If mode = **Areas** → writes zone file
@@ -163,7 +194,7 @@ Triggered when a scheduled mow was cancelled and `goat_makeup_pending` = on.
 3. From here, steps 4–6 from Scenario 1 apply — including clearing `goat_makeup_pending` on dock
 
 **`goat_makeup_pending` lifecycle:**
-- Set on: scheduled mow cancelled by weather
+- Set on: scheduled mow cancelled by weather or Grass Status
 - Cleared: any mowing session ends with mower docked (`GOAT - Close Garage When Docked`)
 - Also manually toggleable from the dashboard
 
@@ -175,30 +206,31 @@ Two independent blocking checks run before every mow:
 
 | Check | Source | Block threshold |
 |---|---|---|
-| Wet grass | `sensor.front_rain_sensor_soil_moisture` | ≥ 55% |
+| Wet grass | `input_select.goat_grass_status` + `sensor.front_rain_sensor_soil_moisture` | Status = Wet, or Uncertain + moisture ≥ 55% |
 | Rain forecast | PirateWeather (`weather.pirateweather`), next 95 min | precipitation_probability ≥ 40% or condition in rainy/pouring/lightning |
 
-Use `script.goat_test_weather_check` (Developer Tools → Actions) to run a live check — result appears as a persistent notification showing soil moisture, forecast slots, and the go/cancel decision.
+Use `script.goat_test_weather_check` (Developer Tools → Actions) to run a live check — result appears as a persistent notification showing Grass Status, soil moisture, forecast slots, and the go/cancel decision.
 
 ---
 
 ## Dashboard layout
 
-Three sections in a vertical-stack replacing the old GOAT card:
+![Dashboard](dashboard_screenshot.png)
+
+Three sections in a vertical-stack:
 
 1. **Entities card** (title: GOAT Mowing Schedule)
    - GOAT Automation Enabled toggle
    - GOAT Status
-   - *Scheduled Mowing* section: Start Time · Mow Mode · Zone IDs
+   - *Scheduled Auto-Mowing* section: Start Time · Mow Mode · Zone IDs
 
 2. **7-column button grid** (`custom:button-card`) — Mon Tue Wed Thu Fri Sat Sun
    - Green = scheduled, grey = off; tap to toggle
 
-3. **Entities card** (title: Mowing Run)
+3. **Entities card** (title: Manual Run / Mowing Status)
    - *Manual Mowing* section: Start Mowing Now button
-   - *Session Status* section: Expected Return · Departure Window Active · Mowing Session Active · Makeup Mow Pending
-   - *Grass Condition* section: Grass Status (editable dropdown) · Grass Moisture +/- · Soil Moisture
-   - *Last Session* section: Last Mowing Started · Last Decision
+   - *Grass Condition* section: Grass Status (editable dropdown) · Grass Moisture +/- · Soil Moisture · Front Soil Moisture · Back Soil Moisture
+   - *Session Status* section: Departure Window Active · Mowing Session Active · Makeup Mow Pending · Last Mowing Started · Last Decision
 
 HACS cards required: `custom:button-card`, `custom:template-entity-row`
 
