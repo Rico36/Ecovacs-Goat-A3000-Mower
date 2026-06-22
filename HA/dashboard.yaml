@@ -16,7 +16,7 @@ views:
                 name: GOAT Status
                 icon: mdi:robot-mower
               - type: section
-                label: Scheduled Auto-Mowing
+                label: Scheduled Mowing
               - entity: input_datetime.goat_mowing_start_time
                 name: Scheduled Start Time
               - entity: input_select.goat_mow_mode
@@ -198,7 +198,7 @@ views:
               - entity: input_select.goat_grass_status
                 name: Grass Status
                 icon: mdi:grass
-              - entity: sensor.soil_moisture_rate_of_change
+              - entity: sensor.soil_moisture_rate_filtered
                 name: Grass Moisture +/-
                 icon: mdi:trending-down
               - entity: sensor.front_rain_sensor_soil_moisture
@@ -232,6 +232,8 @@ views:
                   {% endif %}
               - entity: input_boolean.goat_makeup_pending
                 name: Makeup Mow Pending
+              - type: section
+                label: Last Session
               - type: custom:template-entity-row
                 name: Last Mowing Started
                 icon: mdi:clock-start
@@ -250,5 +252,194 @@ views:
                   {{
                   as_timestamp(states('input_datetime.goat_last_mowing_decision'))
                      | timestamp_custom('%b %d %I:%M %p') }}
-                  — {{ states('input_text.goat_last_mowing_status') }}      
-     
+                  — {{ states('input_text.goat_last_mowing_status') }}
+      - type: vertical-stack
+        cards:
+          - type: entities
+            title: Doors & Security
+            state_color: true
+            show_header_toggle: false
+            entities:
+              - entity: sensor.exterior_secure_status
+                name: Exterior Secure
+                icon: mdi:shield-check
+              - entity: sensor.interior_door_alert_status
+                name: Door Alert
+                icon: mdi:alert-circle
+              - entity: sensor.t1m_status
+                name: T1M Status
+              - type: section
+                label: Garage Door
+              - entity: cover.garage_door
+                name: Garage Door
+              - entity: light.garage_door_light
+                name: Garage Ceiling Light
+              - entity: binary_sensor.garage_door_obstruction
+                name: Garage Obstruction
+              - entity: binary_sensor.garage_door_motion
+                name: Garage Motion
+              - entity: light.garage_kitchen_entrance_ceiling_lamp_white
+              - type: section
+                label: Front Door
+              - entity: lock.front_door
+                name: Front Door Lock
+              - entity: binary_sensor.front_door_presence_presence
+                name: Front Porch Presence
+              - entity: sensor.front_door_battery_percentage
+                name: Front Lock Battery
+              - entity: sensor.front_door_presence_battery
+                name: Presence Sensor Battery
+              - type: section
+                label: Backyard Door
+              - entity: lock.backyard_door_back_door
+                name: Backyard Door Lock
+              - entity: sensor.backyard_door_battery
+                name: Backyard Lock Battery
+              - type: section
+                label: Backyard Gate
+              - entity: binary_sensor.0x00158d008c8b8358_door
+                name: Backyard Gate
+              - entity: sensor.0x00158d008c8b8358_battery
+                name: Gate Sensor Battery
+              - entity: sensor.0x00158d008c8b8358_temperature
+                name: Gate Sensor Temp
+          - type: horizontal-stack
+            cards:
+              - type: button
+                name: Lock Front
+                icon: mdi:lock
+                tap_action:
+                  action: call-service
+                  service: lock.lock
+                  target:
+                    entity_id: lock.front_door
+              - type: button
+                name: Lock Backyard
+                icon: mdi:lock
+                tap_action:
+                  action: call-service
+                  service: lock.lock
+                  target:
+                    entity_id: lock.backyard_door_back_door
+          - type: button
+            name: Lock All Doors
+            icon: mdi:lock-check
+            tap_action:
+              action: call-service
+              service: lock.lock
+              target:
+                entity_id:
+                  - lock.front_door
+                  - lock.backyard_door_back_door
+      - type: entities
+        title: Ricky's Room Presence
+        state_color: true
+        entities:
+          - entity: input_boolean.rickys_room_automation
+          - entity: switch.ricky_s_room_fan
+          - entity: switch.ricky_ceiling_light
+          - entity: sensor.ricky_s_room_presence_motion_state
+            name: Motion state
+          - entity: binary_sensor.ricky_s_room_presence_presence
+            name: Presence
+          - entity: sensor.ricky_s_room_presence_illuminance
+            name: Illuminance
+          - entity: binary_sensor.rickys_door_sensor_contact
+          - entity: sensor.ricky_s_room_presence_battery
+          - entity: sensor.rickys_door_sensor_battery
+      - type: entities
+        title: Victor Bathroom Presence
+        state_color: true
+        entities:
+          - entity: switch.victor_s_batchroon_light_switch
+          - entity: sensor.victor_bathroom_presence_motion_state_2
+            name: Motion state
+          - entity: binary_sensor.victor_bathroom_presence_presence_2
+            name: Presence
+          - entity: sensor.victor_bathroom_presence_illuminance
+          - entity: sensor.victor_bathroom_presence_battery_2
+      - type: conditional
+        conditions: []
+        card:
+          type: media-control
+          entity: media_player.samsung_s95ca_65_4
+      - type: entities
+        title: House Members
+        state_color: true
+        entities:
+          - entity: device_tracker.ricky
+          - entity: device_tracker.cris
+          - entity: device_tracker.victor
+      - type: entities
+        title: Victor's Room
+        entities:
+          - entity: switch.victor_fan_light
+          - entity: switch.victor_room_light
+          - entity: switch.victor_s_room_outlet1
+          - entity: person.victor
+          - entity: device_tracker.victor
+      - type: entities
+        title: Computer Room
+        entities:
+          - entity: switch.computer_room_light
+          - entity: switch.computer_room_light_2
+      - type: entities
+        title: Downstairs Bathroom
+        state_color: true
+        entities:
+          - entity: switch.downstairs_bathroom_fan
+          - entity: switch.downstairs_bathroom_light
+          - entity: timer.fantimer
+      - type: entities
+        title: Stairs
+        state_color: true
+        entities:
+          - entity: light.stairs_led
+          - entity: sensor.stairs_presence_sensor_illuminance
+          - entity: sensor.stairs_presence_sensor_motion_state
+          - entity: binary_sensor.stairs_presence_sensor_presence
+          - entity: sensor.stairs_presence_sensor_battery
+      - type: entities
+        title: Living room lamp
+        entities:
+          - entity: switch.0xa81710b77d7c0000
+      - type: weather-forecast
+        entity: weather.kpdk
+        forecast_type: hourly
+        name: John's Creek Weather
+        show_current: true
+        show_forecast: true
+      - type: entities
+        title: Attic Temperature Sensor
+        state_color: true
+        entities:
+          - entity: sensor.attic_temperature
+            name: Temperature
+          - entity: sensor.h5074_d7e3_humidity
+            name: Humidity
+          - entity: sensor.h5074_d7e3_battery
+            name: Battery
+          - entity: switch.attic_furnace_portable_heater
+      - type: entities
+        title: Kitchen Presence Detector
+        entities:
+          - entity: sensor.everything_presence_lite_e7d410_illuminance
+            name: Illuminance
+          - entity: binary_sensor.everything_presence_lite_e7d410_occupancy
+            name: Occupancy
+            icon: mdi:account-check
+          - entity: binary_sensor.everything_presence_lite_e7d410_zone_1_occupancy
+            name: Zone 1 Occupancy
+          - entity: sensor.everything_presence_lite_e7d410_zone_1_target_count
+            name: Zone 1 Target Count
+          - entity: binary_sensor.everything_presence_lite_e7d410_zone_2_occupancy
+            name: Zone 2 Occupancy
+            icon: mdi:account-check
+          - entity: binary_sensor.everything_presence_lite_e7d410_zone_3_occupancy
+            name: Zone 3 Occupancy
+            icon: mdi:account-check
+          - entity: switch.kitchen_light_switch
+      - type: entities
+        title: Ricky's Room Light
+        entities:
+          - entity: switch.ricky_s_room_light
