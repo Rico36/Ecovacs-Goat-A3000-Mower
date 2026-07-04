@@ -1040,8 +1040,9 @@ automation:
       - variables:
           m: "{{ states('sensor.front_rain_sensor_soil_moisture') | float(0) }}"
           morning: "{{ now().hour >= 4 and now().hour < 10 }}"
-          is_wet: "{{ (morning and m > 65) or m > 69 }}"
-          is_dry: "{{ m < 68 }}"
+          is_wet: "{{ (morning and m > 51) or m > 69 }}"
+          is_dry: "{{ not morning and m < 69 }}"
+
       # ─────────────────────────────────────────────────────────────────────
       - choose:
           - conditions:
