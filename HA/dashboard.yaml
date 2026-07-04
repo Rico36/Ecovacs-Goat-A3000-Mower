@@ -182,14 +182,30 @@ views:
                         - color: var(--primary-text-color)
                         - font-weight: normal
           - type: entities
-            title: Manual Run / Mowing Status
+            title: Mowing Status
             show_header_toggle: false
             entities:
               - type: section
                 label: Manual Mowing
-              - type: button
+              - type: custom:template-entity-row
                 name: Start Mowing Now
-                icon: mdi:play-circle
+                icon: >
+                  {% if is_state('input_boolean.goat_mowing_session_active', 'on') %}
+                    mdi:robot-mower
+                  {% else %}
+                    mdi:play-circle
+                  {% endif %}
+                active: >
+                  {{ is_state('input_boolean.goat_mowing_session_active', 'on') or
+                     is_state('input_boolean.goat_departure_window_active', 'on') }}
+                state: >
+                  {% if is_state('input_boolean.goat_mowing_session_active', 'on') %}
+                    Mowing Active
+                  {% elif is_state('input_boolean.goat_departure_window_active', 'on') %}
+                    Starting…
+                  {% else %}
+                    Tap to start
+                  {% endif %}
                 tap_action:
                   action: call-service
                   service: script.goat_start_mowing_now
@@ -198,17 +214,20 @@ views:
               - entity: input_select.goat_grass_status
                 name: Grass Status
                 icon: mdi:grass
-              - entity: input_boolean.goat_grass_status_override
-                name: Status Override
-                icon: mdi:hand-back-right
-              - entity: input_boolean.goat_delta_rule_active
-                name: Delta Rule Active
-                icon: mdi:delta
+              - type: custom:template-entity-row
+                name: Active Flags
+                icon: mdi:flag-outline
+                state: >
+                  {% set o = is_state('input_boolean.goat_grass_status_override', 'on') %}
+                  {% set d = is_state('input_boolean.goat_delta_rule_active', 'on') %}
+                  {% if o and d %}Override + Delta
+                  {% elif o %}Override
+                  {% elif d %}Delta
+                  {% else %}—
+                  {% endif %}
               - entity: sensor.front_rain_sensor_soil_moisture
                 name: Soil Moisture
                 icon: mdi:water-percent
-              - entity: sensor.lawn_front_soil_moisture
-                name: Front Soil Moisture
               - entity: sensor.lawn_back_soil_moisture
                 name: Back Soil Moisture
               - type: section
@@ -256,4 +275,5 @@ views:
                   as_timestamp(states('input_datetime.goat_last_mowing_decision'))
                      | timestamp_custom('%b %d %I:%M %p') }}
                   — {{ states('input_text.goat_last_mowing_status') }}
+
 
