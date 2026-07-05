@@ -1192,7 +1192,7 @@ automation:
           # P7: High moisture
           - conditions:
               - condition: template
-                value_template: "{{ m > 74 }}"
+                value_template: "{{ m > 78 }}"
             sequence:
               - service: input_select.select_option
                 target:
