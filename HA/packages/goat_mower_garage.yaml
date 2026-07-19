@@ -1485,3 +1485,4 @@ automation:
           entity_id: input_number.goat_last_dry_m
         data:
           value: 0
+
