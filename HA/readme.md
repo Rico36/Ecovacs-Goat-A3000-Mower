@@ -13,6 +13,7 @@ referenced in `validate-patches.sh` — adjust them if your setup differs.
 | Ecovacs (with deebot-client patches) | Mower control and state | `lawn_mower.goat_a3000_lidar` |
 | PirateWeather | Hourly rain forecast for 95-minute window | `weather.pirateweather` |
 | iOS Companion App | Push notifications (critical + regular) | `notify.house_phones` |
+| Alexa Media Player | Spoken pre-mow reminders | `notify.house_alexas` |
 | Zigbee (ZHA or Zigbee2MQTT) | Connects the soil moisture sensor | — |
 | ESPHome — [Ratgdo32](https://ratcloud.llc/products/ratgdo32) | Garage door open/close control and state | `cover.garage_door` |
 
@@ -22,7 +23,8 @@ referenced in `validate-patches.sh` — adjust them if your setup differs.
 > references in `goat_mower_garage.yaml` to match your entity name.
 
 > The Ecovacs integration requires the deebot-client patches in the `/patches` folder to
-> work correctly with the A3000. See the repo root README for install instructions.
+> work correctly with the A3000. See the repo root README for install instructions —
+> including the July 2026 auth change (error 1013) and custom-integration setup.
 
 ### HACS frontend cards (required for the dashboard)
 
@@ -37,12 +39,17 @@ Install both from HACS → Frontend before pasting the dashboard YAML.
 
 | Platform | Purpose |
 |---|---|
-| `sensor: platform: derivative` | Computes soil moisture rate of change (%/hour) |
-| `input_select` | Grass Status (Dry / Wet / Uncertain) and Mow Mode |
-| `input_boolean` | Session flags, schedule day toggles, garage tracking |
-| `input_datetime` | Scheduled start time, session timestamps |
+| `sensor: platform: statistics` | 30-minute rolling **minimum** of soil moisture (`sensor.soil_moisture_30min_min`) — feeds the delta-spike rule |
+| `input_select` | Grass Status (Uncertain / Dry / Wet) and Mow Mode |
+| `input_boolean` | Session flags, schedule day toggles, garage tracking, override + delta flags |
+| `input_number` | Moisture baseline (delta rule) and last-dry threshold (`goat_last_dry_m`) |
+| `input_datetime` | Scheduled start time, session timestamps, override start time |
 | `input_text` | Zone IDs, last mowing status label |
 | `shell_command` | Writes zone IDs to `/tmp/goat_zones` inside the HA container |
+
+External sensor referenced by the pre-mow reminders (define it to match your
+setup, or remove the check): `sensor.goat_rain_last_3_hours` — accumulated
+rain over the past 3 hours.
 
 ---
 
@@ -60,64 +67,92 @@ sensor.front_rain_sensor_soil_moisture
 
 or update the entity ID references in `goat_mower_garage.yaml` to match your actual name.
 
-### How it is used
+---
 
-The sensor drives two independent features:
+## Grass Status — automatic classification
 
-**1. Mowing gate — Grass Status (deterministic)**
-`input_select.goat_grass_status` (Dry / Wet / Uncertain) is evaluated before every mow:
+`input_select.goat_grass_status` (Uncertain / Dry / Wet) is the primary mowing
+gate. The automation `GOAT - Update Grass Status` re-evaluates it on every
+soil moisture change, using a strict **priority chain** — the first rule that
+matches wins:
 
-| Grass Status | Mowing decision |
-|---|---|
-| Dry | Allowed — user override respected |
-| Wet | Blocked |
-| Uncertain | Falls back to raw soil moisture < 55% |
+| # | Rule | Condition | Result |
+|---|---|---|---|
+| P1 | Floor dry | moisture < 55% AND not morning (4–10 AM) | **Dry** — clears delta + override, resets baseline |
+| P2 | Delta spike | status was Dry AND moisture rose > 6% above its 30-min minimum | **Wet** — sets delta flag; the only rule that overrides a manual override |
+| P3 | Manual override hold | override flag on (and not expired) | status held as-is |
+| P4 | Delta cancellation | delta flag on AND moisture ≤ dry threshold | **Dry** — clears delta flag |
+| P5 | Delta hold | delta flag on, moisture still above dry threshold | held **Wet** |
+| P6 | Morning dew | 4–10 AM AND moisture > 51% | **Wet** |
+| P7 | High moisture | moisture > 79% | **Wet** |
+| P8 | Normal dry | moisture ≤ dry threshold | **Dry** |
 
-The status is computed automatically from sensor data but can be **manually overridden**
-from the dashboard dropdown. A manual selection holds until a rule fires again.
+If no rule matches, the last status holds ("Uncertain" if never set).
 
-**2. Grass Status rules**
+### The dynamic dry threshold (`goat_last_dry_m`)
 
-A derivative sensor (`sensor.soil_moisture_rate_of_change`) computes the rate of change
-in %/hour over a 30-minute rolling window. Combined with raw moisture, the automation
-`GOAT - Update Grass Status` classifies grass condition:
+The "dry threshold" used by P4 and P8 is **69%** by default, but adapts to
+your judgment:
 
-| Rule | Condition | Status |
-|---|---|---|
-| Floor dry | moisture < 55% | Dry |
-| Active drying | moisture < 68% AND rate < −1.5 %/h | Dry |
-| Morning wet (before 10 AM) | moisture > 55% AND rate > 0.5 %/h | Wet |
-| Day/evening wet (10 AM+) | moisture > 55% AND rate > 2.0 %/h | Wet |
-| No rule matches | — | Last recorded status held ("Uncertain" if never set) |
+- When you **manually set Dry** from the dashboard, the current soil moisture
+  is saved to `input_number.goat_last_dry_m` and becomes the new dry
+  threshold. Example: you set Dry at 76% → later, any reading ≤ 76% counts
+  as Dry, even though the fixed threshold would have said Wet.
+- The saved threshold is **reset to 0** (falling back to 69) by a **manual
+  Wet** override and every morning at **4 AM** (`GOAT - Reset Dry Threshold
+  At Morning`), so morning dew is always judged against the conservative
+  fixed threshold.
 
-The time-based Wet threshold handles morning dew (slow-forming, 0.5 %/h catches it)
-while avoiding false positives from afternoon cloud cover and humidity fluctuations
-(which typically stay below 2.0 %/h without actual rain).
+### Manual overrides
 
-Thresholds are starting points — calibrate over a few rain/dry cycles by watching
-the sensor history chart.
+Changing Grass Status from the dashboard dropdown sets an override flag
+(`GOAT - Lock Grass Status On Manual Override` — it detects a human user
+in the state-change context, so automation-driven changes don't lock):
 
-**3. Mowing block — raw moisture (hard gate)**
-Every mow attempt also checks raw soil moisture directly:
-- Grass Status = Uncertain AND moisture ≥ 55% → blocked
+- The override **holds the status** against all automatic rules except the
+  delta spike (P2), which represents actual rain landing on the sensor.
+- It **auto-expires after 5 hours** (`GOAT - Expire Manual Override`).
+- Manual **Dry** also records the dry threshold (above); manual **Wet**
+  clears it.
 
-This provides a fast fallback independent of the derivative sensor.
+Thresholds are starting points — calibrate over a few rain/dry cycles by
+watching the sensor history chart.
 
 ---
 
 ## Mowing decision gates
 
-Every mow attempt (scheduled, manual, makeup) must pass **all three gates**:
+Every mow attempt (scheduled, manual, makeup) must pass **all** of these
+gates, evaluated in the mow scripts immediately before starting:
 
 | Gate | Blocks if... |
 |---|---|
-| Grass Status | `Wet` |
-| Raw moisture (when Uncertain) | soil moisture ≥ 55% |
-| Rain forecast | PirateWeather ≥ 40% precipitation probability in next 95 min |
 | Mower error | error sensor ≠ 0 |
+| Grass Status | `Wet` blocks; `Dry` passes; `Uncertain` falls back to raw soil moisture ≥ 55% |
+| Rain forecast | PirateWeather: precipitation probability ≥ 40% **or** condition in rainy / pouring / lightning / lightning-rainy, in the next 95 minutes |
 
-A manual **Dry** override bypasses the moisture gate entirely — the user accepts
-responsibility if conditions turn out otherwise. The forecast gate is never bypassed.
+A manual **Dry** override passes the Grass Status gate — the user accepts
+responsibility if conditions turn out otherwise. The forecast and error
+gates are never bypassed.
+
+---
+
+## Pre-mow reminders (scheduled days only)
+
+Two reminder automations fire before the scheduled start time, on days
+enabled via the dashboard day toggles (same source of truth as the
+gatekeeper) and only while `goat_automation_enabled` is on. Both run the
+same pre-check: Grass Status Wet, rain in the past 3 hours
+(`sensor.goat_rain_last_3_hours`), mower error, or rain forecast in the
+95 minutes after the scheduled start.
+
+| Automation | When | If blocked | If clear |
+|---|---|---|---|
+| `GOAT - Mower Garage Reminder` | T−17 min | Phone push: "Robot Mower Kept Inside" + reason | Alexa announcement: set up the mower, remove the sensor cover, open the backyard gate |
+| `GOAT - Garage Door Reminder` | T−5 min | **Critical** phone push: "GOAT Kept Inside" + reason | Alexa announcement: garage opens automatically in 5 minutes |
+
+These are advisory — the authoritative go/no-go decision still happens in
+`goat_mowing_start` at start time (conditions can change in 17 minutes).
 
 ---
 
