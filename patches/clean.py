@@ -17,6 +17,12 @@ if TYPE_CHECKING:
 
 _LOGGER = get_logger(__name__)
 
+# Last known active task type ("auto", "spotArea", ...), cached from
+# getCleanInfo / onCleanInfo. RESUME must echo the running task's type:
+# the A3000 silently ignores a resume whose type mismatches the task
+# (response is still code 0 / "ok"). Verified via MQTT capture 2026-07-25.
+_LAST_TASK_TYPE: str | None = None
+
 
 class Clean(ExecuteCommand):
     """Clean command."""
@@ -121,6 +127,7 @@ class GetCleanInfo(JsonCommandWithMessageHandling, MessageBodyDataDict):
 
         :return: A message response
         """
+        global _LAST_TASK_TYPE  # noqa: PLW0603
         status: State | None = None
         state = data.get("state")
         if data.get("trigger") == "alert":
@@ -140,6 +147,9 @@ class GetCleanInfo(JsonCommandWithMessageHandling, MessageBodyDataDict):
             if "type" in content:
                 clean_type = content.get("type")
 
+            if clean_type:
+                _LAST_TASK_TYPE = clean_type
+
             if clean_type == "customArea":
                 area_values = content
                 if "value" in content:
@@ -151,6 +161,7 @@ class GetCleanInfo(JsonCommandWithMessageHandling, MessageBodyDataDict):
             status = State.RETURNING
         elif state == "idle":
             status = State.IDLE
+            _LAST_TASK_TYPE = None
 
         if status:
             event_bus.notify(StateEvent(status))
@@ -176,6 +187,11 @@ class CleanMower(CleanV2):
     def _get_args(self, action: CleanAction) -> dict[str, Any]:
         # GOAT LiDAR mowers use 'auto' type for all actions.
         # Sending empty string for pause/stop causes cloud error 20003.
+        # RESUME is the exception: it must match the running task's type
+        # (e.g. resuming a paused spotArea run with type auto is silently
+        # ignored), so echo the last type seen in getCleanInfo/onCleanInfo.
+        if action == CleanAction.RESUME and _LAST_TASK_TYPE:
+            return {"act": action.value, "content": {"type": _LAST_TASK_TYPE}}
         return {"act": action.value, "content": {"type": "auto"}}
 
 
