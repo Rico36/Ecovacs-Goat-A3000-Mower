@@ -42,7 +42,7 @@ Install both from HACS → Frontend before pasting the dashboard YAML.
 | `sensor: platform: statistics` | 30-minute rolling **minimum** of soil moisture (`sensor.soil_moisture_30min_min`) — feeds the delta-spike rule |
 | `input_select` | Grass Status (Uncertain / Dry / Wet) and Mow Mode |
 | `input_boolean` | Session flags, schedule day toggles, garage tracking, override + delta flags |
-| `input_number` | Moisture baseline (delta rule) and last-dry threshold (`goat_last_dry_m`) |
+| `input_number` | Dry baseline (`goat_moisture_baseline`) — the moisture level known to be dry |
 | `input_datetime` | Scheduled start time, session timestamps, override start time |
 | `input_text` | Zone IDs, last mowing status label |
 | `shell_command` | Writes zone IDs to `/tmp/goat_zones` inside the HA container |
@@ -78,30 +78,36 @@ matches wins:
 
 | # | Rule | Condition | Result |
 |---|---|---|---|
-| P1 | Floor dry | moisture < 55% AND not morning (4–10 AM) | **Dry** — clears delta + override, resets baseline |
-| P2 | Delta spike | status was Dry AND moisture rose > 6% above its 30-min minimum | **Wet** — sets delta flag; the only rule that overrides a manual override |
+| P1 | Floor dry | moisture < 55% AND not morning (4–10 AM) | **Dry** — clears delta + override; baseline untouched |
+| P2 | Delta spike | status was Dry AND moisture rose > 6% above its 30-min minimum | **Wet** — sets delta flag, stores the 30-min minimum as the dry baseline; the only rule that overrides a manual override |
 | P3 | Manual override hold | override flag on (and not expired) | status held as-is |
-| P4 | Delta cancellation | delta flag on AND moisture ≤ dry threshold | **Dry** — clears delta flag |
-| P5 | Delta hold | delta flag on, moisture still above dry threshold | held **Wet** |
-| P6 | Morning dew | 4–10 AM AND moisture > 51% | **Wet** |
-| P7 | High moisture | moisture > 79% | **Wet** |
-| P8 | Normal dry | moisture ≤ dry threshold | **Dry** |
+| P4 | Delta cancellation | delta flag on AND moisture ≤ dry baseline | **Dry** — clears delta flag, stores the settled value as the new baseline |
+| P5 | Delta hold | delta flag on, moisture still above the baseline | held **Wet** |
+| P6 | Morning dew | 4–10 AM AND moisture > 51% | **Wet** — unconditional; morning and delta are the two rules that override the baseline |
+| P7 | High moisture | moisture > 79% AND above the dry baseline | **Wet** |
+| P8 | Normal dry | moisture ≤ dry baseline | **Dry** |
 
 If no rule matches, the last status holds ("Uncertain" if never set).
 
-### The dynamic dry threshold (`goat_last_dry_m`)
+### The dry baseline (`goat_moisture_baseline`)
 
-The "dry threshold" used by P4 and P8 is **69%** by default, but adapts to
-your judgment:
+The "dry baseline" is the moisture level known to be dry — **69%** by
+default (when the helper is 0/unset). It is never reset on a schedule,
+and only delta and morning outrank it. It changes four ways:
 
-- When you **manually set Dry** from the dashboard, the current soil moisture
-  is saved to `input_number.goat_last_dry_m` and becomes the new dry
-  threshold. Example: you set Dry at 76% → later, any reading ≤ 76% counts
-  as Dry, even though the fixed threshold would have said Wet.
-- The saved threshold is **reset to 0** (falling back to 69) by a **manual
-  Wet** override and every morning at **4 AM** (`GOAT - Reset Dry Threshold
-  At Morning`), so morning dew is always judged against the conservative
-  fixed threshold.
+- **Manual Dry** from the dashboard saves the current soil moisture as the
+  baseline. Example: you set Dry at 76% → any reading ≤ 76% counts as Dry
+  outside the morning window.
+- **Delta scenarios** maintain it automatically: a spike stores the 30-min
+  pre-rain minimum; a cancellation stores the settled value.
+- **Morning-end snapshot** (`GOAT - Morning End Dry Baseline`): most
+  mornings, dew trips the morning rule and the day starts Wet. At 10am,
+  if the grass is Wet without a delta or manual override, the baseline is
+  set to the current moisture **minus 6** — once dew evaporation drops
+  moisture 6 points below the 10am reading, normal dry flips the status
+  back to Dry. (If moisture is already below 55 at 10am, floor dry fires
+  on the next sensor update regardless of the baseline.)
+- **Manual Wet** clears it back to 0 (threshold falls back to 69).
 
 ### Manual overrides
 
