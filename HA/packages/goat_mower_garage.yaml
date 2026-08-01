@@ -1112,7 +1112,7 @@ automation:
       #   set by manual Dry override (current m), by delta scenarios (spike
       #   stores the 30-min pre-rain minimum; cancel stores the settled
       #   value), and by the morning-end snapshot: at 10am, if Wet came from
-      #   the morning rule (Wet + no delta + no override), baseline = m - 6,
+      #   the morning rule (Wet + no delta + no override), baseline = m - 4,
       #   so ~6 points of dew evaporation flips the day back to Dry.
       #   Cleared to 0 by manual Wet override. Never reset on a schedule.
       # Delta and morning are the two rules that override the baseline.
@@ -1507,7 +1507,7 @@ automation:
       At 10am (end of the morning window), if the grass is Wet from the
       morning dew rule (no delta, no manual override), snapshot the current
       moisture minus 6 as the dry baseline. As dew evaporates and moisture
-      falls 6 points below the 10am reading, the normal-dry rule flips the
+      falls 4 points below the 10am reading, the normal-dry rule flips the
       status back to Dry. If moisture is already below 55 at 10am, floor
       dry fires on the next sensor update regardless of the baseline.
     mode: single
@@ -1530,4 +1530,4 @@ automation:
           entity_id: input_number.goat_moisture_baseline
         data:
           value: >
-            {{ [ (states('sensor.front_rain_sensor_soil_moisture') | float(0)) - 6, 0 ] | max }}
+            {{ [ (states('sensor.front_rain_sensor_soil_moisture') | float(0)) - 4, 0 ] | max }}
