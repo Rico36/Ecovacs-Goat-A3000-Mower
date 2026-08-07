@@ -131,6 +131,14 @@ shell_command:
   # Zone IDs: 2=Front Street, 3=Front, 4=Left Side Street,
   #           5=Backyard Side, 6=Left Side, 7=Backyard
   goat_write_zones: "python3 -c \"open('/tmp/goat_zones', 'w').write('{{ states(\"input_text.goat_zone_ids\") }}')\""
+  # Prints 1 if the patched deebot_client wrote the workComplete marker
+  # within the last 20 minutes (run genuinely finished), else 0. Used by
+  # GOAT - Close Garage When Docked to tell end-of-run docks from mid-run
+  # recharge docks. The marker is written by the vendored clean.py patch.
+  goat_check_work_complete: >-
+    /bin/sh -c 'f=/tmp/goat_work_complete;
+    if [ -f "$f" ] && [ $(( $(date +%s) - $(stat -c %Y "$f") )) -lt 1200 ];
+    then echo 1; else echo 0; fi'
 
 script:
   goat_notify:
@@ -601,21 +609,34 @@ automation:
       - service: script.goat_mowing_start
 
 
-  - alias: GOAT - Manual Start Detected
-    id: goat_manual_start_detected
+  - alias: GOAT - Departure Handler
+    id: goat_departure_handler
+    description: >
+      Unified handler for every departure HA did not initiate itself:
+      app/physical-button starts (session off) and self-resumes after a
+      mid-run recharge (session on). HA-initiated starts are excluded by
+      the departure-window condition — their scripts open the garage
+      before sending start_mowing. Pause first, decide second: halt the
+      mower immediately, then weather-check; rain docks it, clear weather
+      authorizes the session, opens the garage, and resumes.
     mode: single
     trigger:
       - platform: state
         entity_id: lawn_mower.goat_a3000_lidar
+        from: "docked"
         to: "mowing"
     condition:
       - condition: state
         entity_id: input_boolean.goat_automation_enabled
         state: "on"
       - condition: state
-        entity_id: input_boolean.goat_mowing_session_active
+        entity_id: input_boolean.goat_departure_window_active
         state: "off"
     action:
+      # Capture whether this is a recharge resume BEFORE touching any flags
+      - variables:
+          resuming: "{{ is_state('input_boolean.goat_mowing_session_active', 'on') }}"
+
       # Pause first, decide second: halt the mower immediately (single MQTT
       # command, no cloud API wait) so it never races HA to the closed
       # garage door while the forecast is fetched and evaluated.
@@ -652,7 +673,14 @@ automation:
               - service: script.goat_notify
                 data:
                   title: "Mower stopped due to weather"
-                  message: "Mower started but rain is forecast. Sending it back to dock."
+                  message: >
+                    {% if resuming %}
+                      Mower resumed after recharging but rain is forecast.
+                      Sending it back to dock; session stays active for the
+                      3-hour cleanup.
+                    {% else %}
+                      Mower started but rain is forecast. Sending it back to dock.
+                    {% endif %}
                   critical: true
               - service: script.goat_try_dock
 
@@ -663,6 +691,8 @@ automation:
                 - input_boolean.goat_departure_window_active
                 - input_boolean.goat_mowing_session_active
 
+          # Stamp from now: after a recharge this re-arms the 95-min
+          # expected-return and 2-hour not-docked windows from the resume
           - service: input_datetime.set_datetime
             target:
               entity_id: input_datetime.goat_mowing_session_started_at
@@ -679,7 +709,7 @@ automation:
             target:
               entity_id: input_text.goat_last_mowing_status
             data:
-              value: "Manual"
+              value: "{{ 'Resumed' if resuming else 'Manual' }}"
 
           - service: script.goat_open_garage
 
@@ -700,8 +730,15 @@ automation:
 
           - service: script.goat_notify
             data:
-              title: "Manual mowing session detected"
-              message: "Mower started outside of schedule. Garage opened, mowing resumed, automation sequence activated."
+              title: "{{ 'Mowing resumed after recharge' if resuming else 'Manual mowing session detected' }}"
+              message: >
+                {% if resuming %}
+                  Battery at {{ states('sensor.goat_a3000_lidar_battery') }}% —
+                  mower resumed its run. Garage opened for departure.
+                {% else %}
+                  Mower started outside of schedule. Garage opened, mowing
+                  resumed, automation sequence activated.
+                {% endif %}
 
           - delay: "00:01:00"
 
@@ -872,6 +909,14 @@ automation:
         entity_id: input_boolean.goat_mowing_session_active
         state: "on"
 
+      # Don't open the garage while the mower is sitting on the charger
+      # (mid-run recharge keeps the session active with the mower docked)
+      - condition: not
+        conditions:
+          - condition: state
+            entity_id: lawn_mower.goat_a3000_lidar
+            state: "docked"
+
     action:
       - service: script.goat_notify
         data:
@@ -905,17 +950,79 @@ automation:
     action:
       - delay: "00:01:00"
       - service: script.goat_close_garage
+      # The mower pushes onCleanInfo trigger "workComplete" ~2 minutes
+      # before the final dock; the patched vendored clean.py writes
+      # /tmp/goat_work_complete when it sees it. A fresh marker (< 20 min)
+      # means the run genuinely finished; no marker means this dock is a
+      # mid-run recharge. Battery level deliberately plays no role — runs
+      # have been observed completing at 17%.
+      - service: shell_command.goat_check_work_complete
+        response_variable: work_complete
+      - choose:
+          # Run complete — close out the session
+          - conditions:
+              - condition: template
+                value_template: "{{ (work_complete.stdout | default('0')) | trim == '1' }}"
+            sequence:
+              - service: input_boolean.turn_off
+                target:
+                  entity_id:
+                    - input_boolean.goat_departure_window_active
+                    - input_boolean.goat_mowing_session_active
+                    - input_boolean.goat_makeup_pending
+
+              - service: script.goat_notify
+                data:
+                  title: "Mower docked"
+                  message: "Mowing complete. Garage close sequence completed."
+        # No fresh workComplete marker = mid-run recharge. Keep the session
+        # active; GOAT - Departure Handler runs the departure (weather
+        # check, garage, resume) when the mower undocks on its own. If it
+        # never resumes, GOAT - Session Cleanup After Long Charge closes
+        # the session after 3 hours docked.
+        default:
+          - service: input_boolean.turn_off
+            target:
+              entity_id: input_boolean.goat_departure_window_active
+          - service: script.goat_notify
+            data:
+              title: "Mower recharging"
+              message: >
+                Mower docked without a work-complete signal — treating as a
+                recharge break at
+                {{ states('sensor.goat_a3000_lidar_battery') }}% battery.
+                Session stays active; garage will reopen when it resumes.
+
+  - alias: GOAT - Session Cleanup After Long Charge
+    id: goat_session_cleanup_after_long_charge
+    description: >
+      Safety net for a run that ended at a low battery and was misread as
+      a recharge pause: if the mower sits docked for 3 hours with the
+      session still active, the run is over — close out the session.
+    mode: single
+    trigger:
+      - platform: state
+        entity_id: lawn_mower.goat_a3000_lidar
+        to: "docked"
+        for: "03:00:00"
+    condition:
+      - condition: state
+        entity_id: input_boolean.goat_mowing_session_active
+        state: "on"
+    action:
       - service: input_boolean.turn_off
         target:
           entity_id:
             - input_boolean.goat_departure_window_active
             - input_boolean.goat_mowing_session_active
             - input_boolean.goat_makeup_pending
-
       - service: script.goat_notify
         data:
-          title: "Mower docked"
-          message: "Mower is docked. Garage close sequence completed."
+          title: "Mowing session closed"
+          message: >
+            Mower has been docked for 3 hours without resuming — closing
+            out the mowing session.
+
 
   - alias: GOAT - Not Docked Fallback Alert
     id: goat_not_docked_fallback_alert
@@ -1112,7 +1219,7 @@ automation:
       #   set by manual Dry override (current m), by delta scenarios (spike
       #   stores the 30-min pre-rain minimum; cancel stores the settled
       #   value), and by the morning-end snapshot: at 10am, if Wet came from
-      #   the morning rule (Wet + no delta + no override), baseline = m - 4,
+      #   the morning rule (Wet + no delta + no override), baseline = m - 6,
       #   so ~6 points of dew evaporation flips the day back to Dry.
       #   Cleared to 0 by manual Wet override. Never reset on a schedule.
       # Delta and morning are the two rules that override the baseline.
@@ -1507,7 +1614,7 @@ automation:
       At 10am (end of the morning window), if the grass is Wet from the
       morning dew rule (no delta, no manual override), snapshot the current
       moisture minus 6 as the dry baseline. As dew evaporates and moisture
-      falls 4 points below the 10am reading, the normal-dry rule flips the
+      falls 6 points below the 10am reading, the normal-dry rule flips the
       status back to Dry. If moisture is already below 55 at 10am, floor
       dry fires on the next sensor update regardless of the baseline.
     mode: single
@@ -1530,4 +1637,4 @@ automation:
           entity_id: input_number.goat_moisture_baseline
         data:
           value: >
-            {{ [ (states('sensor.front_rain_sensor_soil_moisture') | float(0)) - 4, 0 ] | max }}
+            {{ [ (states('sensor.front_rain_sensor_soil_moisture') | float(0)) - 6, 0 ] | max }}
