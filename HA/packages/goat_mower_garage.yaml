@@ -1208,12 +1208,16 @@ automation:
     action:
       # ── Grass Status thresholds — edit here only ──────────────────────────
       # Wet triggers (only these three):
-      #   Delta spike : m rose > 6 % above 30-min minimum AND status was Dry
+      #   Delta spike : m rose > 3 % above 30-min minimum AND status was Dry
+      #                 (two observed sprinkler events measured ~3.4, so 3.5
+      #                  missed both; 3 clears them with margin and still sits
+      #                  above the ±0.5 jitter and 1.5–2 % / 30 min wobbles
+      #                  seen in overnight traces. Watch for false spikes.)
       #   Morning dew : 4–10 AM AND m > 51 (unconditional — overrides baseline)
       #   High moisture: m > 79 AND m above the dry baseline
       # Dry triggers:
       #   Floor dry   : m < 55 AND not morning → always Dry, clears all flags
-      #   Delta cancel: delta_active AND m ≤ dry baseline → Dry, clear delta
+      #   Delta cancel: delta_active AND m ≤ dry baseline + 1 → Dry, clear delta
       #   Normal dry  : m ≤ dry baseline
       # Dry baseline (input_number.goat_moisture_baseline, fallback 69 when 0):
       #   set ONLY by manual Dry override (current m) and by delta scenarios
@@ -1239,9 +1243,15 @@ automation:
             {{ (as_timestamp(now()) - as_timestamp(t)) | int(0) if t not in ['unknown','unavailable',''] else 0 }}
           expired: "{{ is_state('input_boolean.goat_grass_status_override', 'on') and override_age > 18000 }}"
           morning: "{{ now().hour >= 4 and now().hour < 10 }}"
-          spike: "{{ states('input_select.goat_grass_status') == 'Dry' and (m - min_30) > 6 }}"
+          spike: "{{ states('input_select.goat_grass_status') == 'Dry' and (m - min_30) > 3 }}"
           dry_thresh: "{{ baseline if baseline > 0 else 69 }}"
-          cancel: "{{ delta_active and m <= dry_thresh }}"
+          # +1 tolerance: the spike stores the 30-min MINIMUM as the baseline,
+          # so requiring an exact return would hang Wet whenever moisture
+          # settles slightly above its recent low. Cancel writes the settled
+          # value back as the new baseline, so drift is bounded and self-
+          # correcting. Only the cancel rule gets the tolerance — normal dry
+          # and high moisture still test the baseline exactly.
+          cancel: "{{ delta_active and m <= dry_thresh + 1 }}"
           floor_dry: "{{ m < 55 and not morning }}"
 
       # Clear expired override so rules below treat it as off
