@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Any
 
 from deebot_client.events import StateEvent
@@ -9,6 +10,7 @@ from deebot_client.logging_filter import get_logger
 from deebot_client.message import HandlingResult, MessageBodyDataDict
 from deebot_client.models import ApiDeviceInfo, CleanAction, CleanMode, State
 
+from .charge import Charge
 from .common import ExecuteCommand, JsonCommandWithMessageHandling
 
 if TYPE_CHECKING:
@@ -198,10 +200,15 @@ class CleanMower(CleanV2):
     def _get_args(self, action: CleanAction) -> dict[str, Any]:
         # GOAT LiDAR mowers use 'auto' type for all actions.
         # Sending empty string for pause/stop causes cloud error 20003.
-        # RESUME is the exception: it must match the running task's type
-        # (e.g. resuming a paused spotArea run with type auto is silently
-        # ignored), so echo the last type seen in getCleanInfo/onCleanInfo.
-        if action == CleanAction.RESUME and _LAST_TASK_TYPE:
+        # Every non-START action echoes the running task's type, matching
+        # what the Ecovacs app does. Two observations drive this:
+        #   - RESUME with type auto on a paused spotArea task returns
+        #     code 0 "ok" and is silently ignored (cr0e4u, 2026-07-25).
+        #   - PAUSE with type "" gets no reply at all, while the app's
+        #     PAUSE with type spotArea is accepted (51rcxt, 2026-09).
+        # START keeps type auto; CleanMowerArea overrides it with spotArea
+        # when a zone file is present.
+        if action != CleanAction.START and _LAST_TASK_TYPE:
             return {"act": action.value, "content": {"type": _LAST_TASK_TYPE}}
         return {"act": action.value, "content": {"type": "auto"}}
 
@@ -232,3 +239,47 @@ class CleanMowerArea(CleanMower):
             except OSError:
                 pass
         return super()._get_args(action)
+
+
+class CleanMowerEndAndCharge(Charge):
+    """Dock command that ends the running task first.
+
+    Plain `charge` (act: go) sends the mower home but leaves the task
+    suspended: the Ecovacs app keeps offering END / Continue, the mower can
+    auto-resume once charged, and `workComplete` never fires — so HA cannot
+    tell the dock apart from a mid-run recharge.
+
+    HA's lawn_mower platform exposes no stop service, so its Dock button is
+    the only terminal control available. Wire this class to the hardware
+    profile's `charge` capability and Dock in HA means "end the run and go
+    home". Pause / Continue from the Ecovacs app are untouched and still
+    resume normally.
+    """
+
+    async def _execute(
+        self,
+        authenticator: Authenticator,
+        device_info: ApiDeviceInfo,
+        event_bus: EventBus,
+    ) -> tuple[HandlingResult, dict[str, Any]]:
+        """End the task, then return to the dock."""
+        # execute() is @final and swallows its own errors, so a failed stop
+        # never blocks the charge that follows.
+        await CleanMower(CleanAction.STOP).execute(
+            authenticator, device_info, event_bus
+        )
+
+        # An HA-initiated dock IS the end of the run, but the mower only
+        # emits workComplete when a job finishes naturally — so write the
+        # marker ourselves. Without this, GOAT - Session End On Dock finds
+        # no marker, misreads the dock as a mid-run recharge, and leaves the
+        # session open until the 3-hour cleanup.
+        try:
+            with open("/tmp/goat_work_complete", "w") as f:
+                f.write("1")
+        except OSError:
+            pass
+
+        # Give the mower a moment to register the stop before sending it home
+        await asyncio.sleep(2)
+        return await super()._execute(authenticator, device_info, event_bus)
